@@ -97,6 +97,6 @@ python -u train.py --mask-type='constant-0.0' --dataset='MELD'
 
 ## 📝 Citation & Acknowledgements
 
-If you use the preprocessed data above and require details on the preprocessing steps, please refer to the methods in SDR-GNN and MMGCN.
+If you use the preprocessed data above and require details on the preprocessing steps, please refer to the methods in GCNet(for IEMOCAP) and MMGCN(for MELD).
 
 **Acknowledgement:** The code in this repository references the work and implementations of **GCNet**, **SDR-GNN**, and **DiCMoR**.
