@@ -28,7 +28,7 @@ class AdaptiveConfidenceFusion(nn.Module):
             for _ in range(self.num_modalities)
         ])
 
-        # ===== Deep Modification: Build a deeper, more powerful classifier =====
+        # ===== Build a deeper, more powerful classifier =====
         # Designed mimicking the Feed-Forward Network (FFN) of Transformers
         # Usually, the intermediate layer dimension of FFN expands first and then compresses
         # ffn_hidden_dim1 = feature_dim * 2  # First hidden layer, performing dimension expansion
@@ -56,7 +56,6 @@ class AdaptiveConfidenceFusion(nn.Module):
         self.modality_classifiers = nn.ModuleList([
             nn.Linear(feature_dim, n_classes) for _ in range(self.num_modalities)
         ])
-        # ======================= End of Modification =======================
         
         # Multi-head attention fusion layer
         # batch_first=True because we will reshape [Time, Batch, Dim] to [Time*Batch, Modal, Dim]
@@ -79,58 +78,28 @@ class AdaptiveConfidenceFusion(nn.Module):
         Returns:
             Tensor: Fused feature tensor [Time, Batch, Dim * 3]
         """
-        # 1. Prepare inputs
         time_len, batch_size, _ = audio_feats.shape
         features_list = [audio_feats, text_feats, video_feats]
 
-        # 2. Reshape for batch processing: [Time, Batch, Dim] -> [Time*Batch, Dim]
-        # flat_features = [f.view(-1, self.feature_dim) for f in features_list]
         flat_features = [f.transpose(0, 1).contiguous().view(-1, f.size(2)) for f in features_list]
 
-        
-
-        # ===== Modified Section: Calculate, store, and use confidence and logits =====
         weighted_features = []
         modality_logits = []
         modality_confidences = []
 
         for i in range(self.num_modalities):
-            # 1. Predict independent classification results for this modality
             logits = self.modality_classifiers[i](flat_features[i])
             modality_logits.append(logits)
 
-            # 2. Predict the confidence score for this modality
             confidence_score = self.confidence_predictors[i](flat_features[i])
             modality_confidences.append(confidence_score)
             
-            # 3. Activate confidence score using Sigmoid and weight the features
-            # Placing the activation function here instead of init allows us to obtain raw scores for potential other losses
             confidence_weight = torch.sigmoid(confidence_score)
             weighted = flat_features[i] * confidence_weight
             weighted_features.append(weighted)
 
-        # 4. Prepare input for attention mechanism
-        # Stack weighted feature lists into a tensor: [Time*Batch, Num_Modalities, Dim]
-        # stacked_features = torch.stack(weighted_features, dim=1)
-        # # 5. Apply multi-head self-attention for fusion
-        # # Q, K, V are all stacked features, implementing self-attention
-        # fused_features, _ = self.attention_fusion(
-        #     query=stacked_features,
-        #     key=stacked_features,
-        #     value=stacked_features
-        # )
-        # # Apply residual connection and layer normalization
-        # fused_features = self.layer_norm(fused_features + stacked_features)
-        # fused_features = self.dropout(fused_features)
-        # # 6. Flatten fused features
-        # # [Time*Batch, Num_Modalities, Dim] -> [Time*Batch, Num_Modalities * Dim]
-        # flat_fused = fused_features.contiguous().view(-1, self.num_modalities * self.feature_dim)
-
         flat_fused = torch.cat(weighted_features, dim=1)
-        # 7. Restore original time and batch dimensions
-        # [Time*Batch, Num_Modalities*Dim] -> [Time, Batch, Num_Modalities*Dim]
-        # final_output = flat_fused.view(time_len, batch_size, -1)
-        final_output = flat_fused.view(batch_size, time_len, -1).transpose(0, 1).contiguous()
 
+        final_output = flat_fused.view(batch_size, time_len, -1).transpose(0, 1).contiguous()
 
         return final_output, modality_logits, modality_confidences
