@@ -55,10 +55,10 @@ def pad(tensor, length, no_cuda):
 class GraphNetwork(torch.nn.Module):
     def __init__(self, num_features, num_relations, hidden_size=64, dropout=0.5, no_cuda=False):
         super(GraphNetwork, self).__init__()
-        self.no_cuda = no_cuda                # Whether to use CUDA
-        self.hidden_size = hidden_size        # Hidden dimension of Graph Neural Network
+        self.no_cuda = no_cuda
+        self.hidden_size = hidden_size
 
-        self.rgat = RGATConv( # Parameter count: 70,900 / 40,900 - 30,500 = 10,400
+        self.rgat = RGATConv(
             in_channels=num_features,
             out_channels=hidden_size,
             num_relations=1, # Original code was 2 here; if your edge_type categories exceed 2, adjust accordingly
@@ -66,42 +66,33 @@ class GraphNetwork(torch.nn.Module):
             concat=False,
             dropout=0.1,
             attention_mechanism='within-relation',
-            edge_dim=1  # <--- Core addition: specify edge feature dimension as 1
+            edge_dim=1 
         )
-        # self.gat = GATConv( # Parameter count: 30500
-        #     in_channels=num_features,
-        #     out_channels=hidden_size,
-        #     heads=1,
-        #     concat=False,
-        #     dropout=0.1,
-        #     edge_dim=1  # <--- Keep this parameter to receive edge features
-        # )
 
     def forward(self, features, edge_index, edge_type, seq_lengths, umask, edge_attr=None):
 
         out = self.rgat(features, edge_index, edge_type, edge_attr)
-        # out = self.gat(features, edge_index, edge_attr)
 
-        outputs = torch.cat([features, out], dim=-1)  # Concatenate original input with graph representation => [num_nodes, num_features + hidden_size]
+        outputs = torch.cat([features, out], dim=-1)
 
         ## Convert to conversation sequence format => organize each utterance by conversation structure
-        outputs = outputs.reshape(-1, outputs.size(1))  # [num_utterance, dim]
-        outputs = utterance_to_conversation(outputs, seq_lengths, umask, self.no_cuda)  # [seqlen, batch, dim]
-        outputs = outputs.reshape(outputs.size(0), outputs.size(1), 1, -1)  # Add a dimension [seqlen, batch, 1, dim]
+        outputs = outputs.reshape(-1, outputs.size(1)) 
+        outputs = utterance_to_conversation(outputs, seq_lengths, umask, self.no_cuda)
+        outputs = outputs.reshape(outputs.size(0), outputs.size(1), 1, -1)
 
         ## Flatten dimension before feeding into GRU
         seqlen = outputs.size(0)
         batch = outputs.size(1)
-        outputs = torch.reshape(outputs, (seqlen, batch, -1))  # Flatten into [seqlen, batch, dim]
+        outputs = torch.reshape(outputs, (seqlen, batch, -1))
 
         hidden = outputs
 
-        return hidden,  # Return final feature representation for each time step
+        return hidden,
 
 
 
 class GraphModel(nn.Module):
-    def __init__(self, adim, tdim, vdim, lstm_hidden_size, graph_hidden_size, flow_hidden_size, # 150, 100, 128
+    def __init__(self, adim, tdim, vdim, lstm_hidden_size, graph_hidden_size, flow_hidden_size,
                  n_speakers, window_past, window_future, dataset, 
                  n_classes, dropout=0.5, no_cuda=False, use_bn=False,
                  n_flow=8, num_blocks_rec=10, reduction_rec=16, n_block_glow=1, **kwargs):
@@ -113,13 +104,13 @@ class GraphModel(nn.Module):
         # ============================ #
         
         self.no_cuda = no_cuda
-        self.n_speakers = n_speakers               # Number of speakers in conversation
-        self.window_past = window_past             # Past window length considered in graph construction
-        self.window_future = window_future         # Future window length considered in graph construction
+        self.n_speakers = n_speakers 
+        self.window_past = window_past 
+        self.window_future = window_future 
         self.flow_hidden_size = flow_hidden_size
 
-        self.edge_weight_sigma = 5    # Gaussian kernel sigma for temporal weights
-        self.edge_weight_beta = 0.5   # Discount factor for speaker consistency weights
+        self.edge_weight_sigma = 5 
+        self.edge_weight_beta = 0.5 
 
         # ============================ #
         #     Unimodal LSTM
@@ -252,12 +243,12 @@ class GraphModel(nn.Module):
         #     Unimodal, Graph Network Local Information Extraction
         # ============================ #
 
-        outputs_mask= input_features_mask[0]  # Input feature mask [Time, Batch, 1]
-        outputs_mask = outputs_mask.unsqueeze(2)  # Add dummy dimension for subsequent concatenation [Time, Batch, 1, Dim]
+        outputs_mask= input_features_mask[0]
+        outputs_mask = outputs_mask.unsqueeze(2) 
 
-        outputs_a = audio_out.unsqueeze(2)  # -> [Time, Batch, 1, 300]
-        outputs_t = text_out.unsqueeze(2)  # -> [Time, Batch, 1, 300]
-        outputs_v = video_out.unsqueeze(2)  # -> [Time, Batch, 1, 300]
+        outputs_a = audio_out.unsqueeze(2)
+        outputs_t = text_out.unsqueeze(2)
+        outputs_v = video_out.unsqueeze(2)
 
         # ============================ #
         #     Build a graph for each modality
@@ -282,30 +273,22 @@ class GraphModel(nn.Module):
         #     Calculate Edge Weights
         # ============================ #
 
-        with torch.no_grad(): # Usually edge weight calculation does not involve gradient backprop
+        with torch.no_grad(): 
             src, dest = edge_index[0], edge_index[1]
-            # Calculate temporal weight f_T
             p_src = features_node_positions[src].float()
             p_dest = features_node_positions[dest].float()
-            # `features_node_positions` stores temporal position of each node.
-            # Efficiently obtain temporal position of all source/target nodes via indices `src` and `dest`.
             temporal_dist_sq = (p_src - p_dest)**2
-            # Element-wise calculation of squared difference, getting (p_u - p_v)^2.
             temporal_weight = torch.exp(-temporal_dist_sq / (2 * self.edge_weight_sigma**2))
-            # Implement Gaussian kernel formula to get temporal weight for each edge.
-            # Calculate speaker consistency weight f_S
+
             src_speakers = features_speaker_ids[src]
             dest_speakers = features_speaker_ids[dest]
-            # Similar to position info, get speaker IDs for all source/target nodes.
-            # Create a new tensor with same shape as input_tensor, but initialized to 1.0.
             speaker_consistency_weight = torch.ones_like(src_speakers, dtype=torch.float)
-            # First create a tensor of all ones, which is the default weight (corresponds to speaker(u) == speaker(v)).
             speaker_consistency_weight[src_speakers != dest_speakers] = self.edge_weight_beta
+
             edge_weight = temporal_weight * speaker_consistency_weight
-            # New method:
             edge_attr = torch.stack([
                 edge_weight
-            ], dim=1) # shape: [num_edges, 3]
+            ], dim=1)
 
         # ============================ #
         #     GAT Graph Neural Network Learning
@@ -376,20 +359,16 @@ class GraphModel(nn.Module):
         # ============================ #
 
         flow_outputs = {}
-        # Prepare modality masks
         mask_a = input_features_mask[0][:, :, 0].bool().permute(1, 0)
         mask_t = input_features_mask[0][:, :, 1].bool().permute(1, 0)
         mask_v = input_features_mask[0][:, :, 2].bool().permute(1, 0)
 
-        # Step 1: Pass all data (including generated features for missing modalities) through Glow network
         logdet_a, z_a_out = self.flow_a(x_prime_a_4d)
         logdet_t, z_t_out = self.flow_t(x_prime_t_4d)
         logdet_v, z_v_out = self.flow_v(x_prime_v_4d)
 
         flat_labels = label.view(-1)
         
-        # Classification Task (IEMOCAP, MELD)
-        # Labels are indices themselves
         label_indices = flat_labels.long()
 
         # ============================ #
@@ -399,21 +378,17 @@ class GraphModel(nn.Module):
         all_means = []
         all_log_sds = []
         zero_input = torch.zeros(1, self.flow_hidden_size, 1, 1, device=z_a_out.device)
-        # This small loop is fixed (2 or 7 times), very fast
         for prior_model in self.priors:
-            # mean, log_sd = self.priors[0](zero_input).chunk(2, 1)
             mean, log_sd = prior_model(zero_input).chunk(2, 1)
             all_means.append(mean.squeeze())
             all_log_sds.append(log_sd.squeeze())
-        all_means = torch.stack(all_means, dim=0)   # Shape: [num_priors, C]
-        all_log_sds = torch.stack(all_log_sds, dim=0) # Shape: [num_priors, C]
+        all_means = torch.stack(all_means, dim=0)
+        all_log_sds = torch.stack(all_log_sds, dim=0)
 
-        # New method: Squeeze H and W dimensions
-        z_a_flat = z_a_out.squeeze(-1).squeeze(-1) # [B*T, 256, 1, 1] -> [B*T, 256]
+        z_a_flat = z_a_out.squeeze(-1).squeeze(-1) 
         z_t_flat = z_t_out.squeeze(-1).squeeze(-1)
         z_v_flat = z_v_out.squeeze(-1).squeeze(-1)
 
-        # --- Create final valid masks ---
         flat_umask = umask.view(-1).bool()
         flat_mask_a = mask_a.T.contiguous().view(-1)
         flat_mask_t = mask_t.T.contiguous().view(-1)
@@ -433,7 +408,6 @@ class GraphModel(nn.Module):
             valid_indices_a = label_indices[final_valid_mask_a]
             batch_means_a = all_means[valid_indices_a]
             batch_log_sds_a = all_log_sds[valid_indices_a]
-            # !!! Assign calculation result to log_p_sum_a !!!
             log_p_sum_a = gaussian_log_p(valid_z_a, batch_means_a, batch_log_sds_a).sum()
 
         # Text
@@ -442,7 +416,6 @@ class GraphModel(nn.Module):
             valid_indices_t = label_indices[final_valid_mask_t]
             batch_means_t = all_means[valid_indices_t]
             batch_log_sds_t = all_log_sds[valid_indices_t]
-            # !!! Assign calculation result to log_p_sum_t !!!
             log_p_sum_t = gaussian_log_p(valid_z_t, batch_means_t, batch_log_sds_t).sum()
         
         # Video
@@ -451,14 +424,11 @@ class GraphModel(nn.Module):
             valid_indices_v = label_indices[final_valid_mask_v]
             batch_means_v = all_means[valid_indices_v]
             batch_log_sds_v = all_log_sds[valid_indices_v]
-            # !!! Assign calculation result to log_p_sum_v !!!
             log_p_sum_v = gaussian_log_p(valid_z_v, batch_means_v, batch_log_sds_v).sum()
             
         # --- Combine into final log-likelihood ---
-        # Directly use final_valid_mask on [B*T] logdet tensor
         log_p_a_final = 0.0
         if final_valid_mask_a.any(): # Check if any valid audio samples exist
-            # Note: logdet_a is [B*T], final_valid_mask_a is also [B*T]
             log_p_a_final = 0.01 * logdet_a[final_valid_mask_a].sum() + log_p_sum_a
 
         log_p_t_final = 0.0
@@ -470,7 +440,6 @@ class GraphModel(nn.Module):
             log_p_v_final = 0.01 * logdet_v[final_valid_mask_v].sum() + log_p_sum_v
 
         # --- Store results in flow_outputs ---
-        # Keep only non-zero losses
         if final_valid_mask_a.any():
             flow_outputs['a'] = {'log_p': log_p_a_final}
         if final_valid_mask_t.any():
@@ -487,58 +456,42 @@ class GraphModel(nn.Module):
         # final_a, final_t, final_v = x_prime_a, x_prime_t, x_prime_v
         final_a, final_t, final_v = x_prime_a.clone(), x_prime_t.clone(), x_prime_v.clone()
         with torch.no_grad():
-            # --- Temporarily reshape z back to [B, C, T, 1] for fusion logic ---
-            # Need T and B from original sequence shape
             T_seq, B_seq = final_a.shape[:2]
             C_common = self.flow_hidden_size
-            # If needed, recompute z_out, or use stored z_out if gradients are detached
-            _, z_a_out_flow = self.flow_a(x_prime_a_4d) # Recalculate z with detached gradients: [B*T, C, 1, 1]
+            _, z_a_out_flow = self.flow_a(x_prime_a_4d)
             _, z_t_out_flow = self.flow_t(x_prime_t_4d)
             _, z_v_out_flow = self.flow_v(x_prime_v_4d)
-            # Reshape for fusion: [B*T, C, 1, 1] -> [B, T, C] -> [B, C, T, 1]
             z_a_out_seq = z_a_out_flow.squeeze(-1).squeeze(-1).view(B_seq, T_seq, C_common).permute(0, 2, 1).unsqueeze(-1)
             z_t_out_seq = z_t_out_flow.squeeze(-1).squeeze(-1).view(B_seq, T_seq, C_common).permute(0, 2, 1).unsqueeze(-1)
             z_v_out_seq = z_v_out_flow.squeeze(-1).squeeze(-1).view(B_seq, T_seq, C_common).permute(0, 2, 1).unsqueeze(-1)
-            # --- Fusion Reshape End ---
 
-        # --- Helper Function 1: [B,C,T,1] -> [B*T, C, 1, 1] (for use with flow_model.reverse)
         def z_seq_to_flat_flow(z_seq, C_common):
             return z_seq.squeeze(-1).permute(0, 2, 1).contiguous().view(-1, C_common).unsqueeze(-1).unsqueeze(-1)
 
-        # --- New Core Reconstruction Function (v3: with mapping layer) ---
         def reconstruct_with_mapping(
-            mapping_layer,  # !!! Added: e.g., self.fusion_mapping_a
+            mapping_layer,
             flow_model, rec_model, 
             x_intra_seq, z_cross_list_seq, 
             C_common, target_tensor, update_mask):
                         
-            # [B*T,C,1,1] -> [B*T,C]
             x_intra_seq_flat = x_intra_seq.squeeze(-1).squeeze(-1)
             concat_list = [x_intra_seq_flat]
             
-            # 2. Get "two values obtained by inputting zt, zv into glow-1a respectively"
             for z_cross_seq in z_cross_list_seq:
                 z_cross_flat_for_flow = z_seq_to_flat_flow(z_cross_seq, C_common)
-                # Step (A): Input to glow-1a
+
                 x_tilde_4d = flow_model.reverse(z_cross_flat_for_flow)
-                # Step (B): Get "value" (squeeze H, W dimensions)
+
                 x_tilde_flat = x_tilde_4d.squeeze(-1).squeeze(-1)
                 concat_list.append(x_tilde_flat)
                 
-            # 3. "Get concatenation result of three values"
-            # [B*T, C] + [B*T, C] + [B*T, C] -> [B*T, 3*C]
             x_hat_input_flat = torch.cat(concat_list, dim=1)
             
-            # 5. --- !!! New Mapping Layer !!! ---
-            # This is the step you requested:
-            # [B*T, 3*C] -> [B*T, 400]
             x_hat_flat = mapping_layer(x_hat_input_flat)
             
-            # 8. Reshape back to sequence [T, B, 512]
             T_seq, B_seq = target_tensor.shape[:2]
             x_hat_seq = x_hat_flat.view(B_seq, T_seq, -1).permute(1, 0, 2)
             
-            # 9. Assign using mask
             target_tensor[update_mask.T] = x_hat_seq[update_mask.T]
             return target_tensor
 
@@ -629,7 +582,6 @@ class GraphModel(nn.Module):
         #     Adaptive Confidence Weighted Fusion
         # ============================ #
 
-        # Feed outputs of three modalities into new module, and receive all return values
         concat_features, modality_logits, modality_confidences = self.confidence_fusion_module(
             final_a, final_t, final_v
         )
@@ -639,11 +591,10 @@ class GraphModel(nn.Module):
         # ============================ #
 
         projected_features, _ = self.lstm_atv(concat_features)
-        # Prepare input format for batch_graphify
-        outputs = projected_features.unsqueeze(2)  # -> [Time, Batch, 1, 300]
+        outputs = projected_features.unsqueeze(2) 
 
-        outputs_mask= input_features_mask[0]  # Input feature mask [Time, Batch, 1]
-        outputs_mask = outputs_mask.unsqueeze(2)  # Add dummy dimension for subsequent concatenation [Time, Batch, 1, Dim]
+        outputs_mask= input_features_mask[0]
+        outputs_mask = outputs_mask.unsqueeze(2)
 
         # ============================ #
         #     Graph Construction
@@ -659,7 +610,6 @@ class GraphModel(nn.Module):
         #     Graph Learning
         # ============================ #
 
-        # # <--- Modification Start: Pass edge_weight to graph network --->
         hidden1 = self.graph_net_temporal(
             features,
             edge_index,
@@ -675,14 +625,12 @@ class GraphModel(nn.Module):
         #     Classification Probability Calculation
         # ============================ #
         
-        log_prob = self.smax_fc(hidden0)  # Classification prediction results [seqlen, batch, n_classes]
+        log_prob = self.smax_fc(hidden0)
 
         x_prime_dict = {'a': x_prime_a, 't': x_prime_t, 'v': x_prime_v}
         recovered_dict = {'a': final_a, 't': final_t, 'v': final_v}
 
-        # Pack final features before fusion
         final_features_dict = {'a': final_a, 't': final_t, 'v': final_v}        
 
-        # Added umask_flat, x_prime_dict, recovered_dict, flow_outputs to return values
         return log_prob, modality_logits, modality_confidences, \
                 x_prime_dict, recovered_dict, flow_outputs, hidden0, final_features_dict
