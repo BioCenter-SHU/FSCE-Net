@@ -15,8 +15,8 @@ def read_data(label_path, feature_root):
     # ============================ #
     #     Read information from label file
     # ============================ #
-    names = []      # List of all utterance names
-    speakers = []   # Corresponding speakers (F/M)
+    names = []
+    speakers = []
 
     # Load multiple variables from pkl file
     videoIDs, videoLabels, videoSpeakers, videoSentence, trainVid, testVid = pickle.load(
@@ -27,16 +27,16 @@ def read_data(label_path, feature_root):
 
     # Iterate through each video to extract the name and speaker of each utterance
     for ii, vid in enumerate(vids):
-        uids_video = videoIDs[vid]          # Unique ID for each utterance in the current video (e.g., Ses01F_impro01_F000)
-        spks_video = videoSpeakers[vid]     # Speaker for each utterance (F/M)
+        uids_video = videoIDs[vid]
+        spks_video = videoSpeakers[vid]
         names.extend(uids_video)
         speakers.extend(spks_video)
 
     # ============================ #
     #      Load corresponding feature data
     # ============================ #
-    features = []       # Features for all utterances
-    feature_dim = -1    # Feature dimension (for subsequent initialization)
+    features = []
+    feature_dim = -1
 
     for ii, name in enumerate(names):
         speaker = speakers[ii]
@@ -52,16 +52,16 @@ def read_data(label_path, feature_root):
         if feature_path.endswith('.npy'):
             # Audio/Text features => Load npy file directly (one per utterance)
             single_feature = np.load(feature_path)
-            single_feature = single_feature.squeeze()  # [Dim,] or [Time, Dim]
+            single_feature = single_feature.squeeze()
             feature[speaker].append(single_feature)
-            feature_dim = max(feature_dim, single_feature.shape[-1])  # Update max dimension
+            feature_dim = max(feature_dim, single_feature.shape[-1])
         else:
             # Video (e.g., FACET) features are in a folder containing multiple .npy files divided by face (e.g., F_001.npy)
             facenames = os.listdir(feature_path)
             for facename in sorted(facenames):
                 assert 'F' in facename or 'M' in facename, f"face filename should contain F or M"
                 facefeat = np.load(os.path.join(feature_path, facename))
-                feature_dim = max(feature_dim, facefeat.shape[-1])  # Update max dimension
+                feature_dim = max(feature_dim, facefeat.shape[-1])
                 if 'F' in facename:
                     feature['F'].append(facefeat)
                 else:
@@ -71,12 +71,12 @@ def read_data(label_path, feature_root):
         for speaker in feature:
             single_feature = np.array(feature[speaker]).squeeze()
             if len(single_feature) == 0:
-                single_feature = np.zeros((feature_dim, ))  # Pad with 0 if empty
+                single_feature = np.zeros((feature_dim, ))
             elif len(single_feature.shape) == 2:
-                single_feature = np.mean(single_feature, axis=0)  # Average over multiple frames
-            feature[speaker] = single_feature  # Final shape: [Dim]
+                single_feature = np.mean(single_feature, axis=0)
+            feature[speaker] = single_feature
 
-        features.append(feature)  # Add to all features
+        features.append(feature)
 
     # ============================ #
     #     Build name -> feature mapping
@@ -86,9 +86,9 @@ def read_data(label_path, feature_root):
 
     name2feats = {}
     for ii in range(len(names)):
-        name2feats[names[ii]] = features[ii]  # Each name corresponds to its {'F':..., 'M':...} features
+        name2feats[names[ii]] = features[ii]
 
-    return name2feats, feature_dim  # Return mapping and feature dimension
+    return name2feats, feature_dim
 
 
 
@@ -117,18 +117,18 @@ class IEMOCAPDataset(Dataset):
         # ========================= #
         self.max_len = -1
 
-        self.videoAudioHost = {}     # Host speaker audio features
-        self.videoTextHost = {}      # Host speaker text features
-        self.videoVisualHost = {}    # Host speaker visual features
+        self.videoAudioHost = {}
+        self.videoTextHost = {}
+        self.videoVisualHost = {}
 
-        self.videoAudioGuest = {}    # Guest speaker audio features
-        self.videoTextGuest = {}     # Guest speaker text features
-        self.videoVisualGuest = {}   # Guest speaker visual features
+        self.videoAudioGuest = {}
+        self.videoTextGuest = {}
+        self.videoVisualGuest = {}
 
-        self.videoLabelsNew = {}     # Labels for each utterance
-        self.videoSpeakersNew = {}   # Speaker encoding for each utterance
+        self.videoLabelsNew = {}
+        self.videoSpeakersNew = {}
 
-        speakermap = {'F': 0, 'M': 1}  # Map F/M to integers 0/1
+        speakermap = {'F': 0, 'M': 1}
 
         # ========================= #
         # Load multiple structured information from label file
@@ -139,15 +139,14 @@ class IEMOCAPDataset(Dataset):
          self.videoSentences,
          self.trainVid, self.testVid) = pickle.load(open(label_path, "rb"), encoding='latin1')
 
-        # All video IDs (train + test)
         self.vids = sorted(list(self.trainVid | self.testVid))
 
         for ii, vid in enumerate(self.vids):
-            uids = self.videoIDs[vid]         # List of utterance names
-            labels = self.videoLabels[vid]    # Corresponding labels
-            speakers = self.videoSpeakers[vid]# Corresponding speakers (F/M)
+            uids = self.videoIDs[vid]
+            labels = self.videoLabels[vid]
+            speakers = self.videoSpeakers[vid]
 
-            self.max_len = max(self.max_len, len(uids))  # Record max sequence length
+            self.max_len = max(self.max_len, len(uids))
 
             # Initialize modality storage structure for current video
             self.videoAudioHost[vid] = []
@@ -214,14 +213,14 @@ class IEMOCAPDataset(Dataset):
     # Custom collate_fn, used for DataLoader to automatically pad sequences of different lengths
     def collate_fn(self, data):
         datnew = []
-        dat = pd.DataFrame(data)  # Convert batch data to DataFrame, columns correspond to fields
+        dat = pd.DataFrame(data)
 
-        for i in dat:  # Iterate through each column (field)
+        for i in dat:
             if i <= 5: 
-                datnew.append(pad_sequence(dat[i]))           # Multimodal input feature padding (preserve order)
+                datnew.append(pad_sequence(dat[i]))
             elif i <= 8:
-                datnew.append(pad_sequence(dat[i], True))     # Mask and label padding (reverse order pad)
+                datnew.append(pad_sequence(dat[i], True))
             else:
-                datnew.append(dat[i].tolist())                # Video name, no processing needed
+                datnew.append(dat[i].tolist())
 
         return datnew
