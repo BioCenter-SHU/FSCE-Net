@@ -32,7 +32,6 @@ class MyMELDDataset(Dataset):
         self.validVid = loaded_data[8] if len(loaded_data) > 8 else None
         self.testVid = loaded_data[9] if len(loaded_data) > 9 else None
         
-        # --- ✅ Core modification here ---
         if split == 'train':
             if self.trainVid is None: raise ValueError("Train IDs ('trainVid') not found or is None in pkl file.")
             self.keys = sorted(list(self.trainVid))
